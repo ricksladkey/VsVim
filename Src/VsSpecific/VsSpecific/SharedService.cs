@@ -102,6 +102,11 @@ namespace Vim.VisualStudio.Specific
             return ClosePeekView(peekView);
         }
 
+        bool ISharedService.GetInsertFinalNewLine(IEditorOptions options)
+        {
+            return GetInsertFinalNewLine(options);
+        }
+
         #endregion
     }
 }

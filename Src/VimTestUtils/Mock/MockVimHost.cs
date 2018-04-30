@@ -221,6 +221,11 @@ namespace Vim.UnitTest.Mock
             return false;
         }
 
+        bool IVimHost.GetInsertFinalNewLine(IEditorOptions value)
+        {
+            return false;
+        }
+
         bool IVimHost.LoadFileIntoExistingWindow(string filePath, ITextView textView)
         {
             return true;

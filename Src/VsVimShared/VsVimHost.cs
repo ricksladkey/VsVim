@@ -514,6 +514,11 @@ namespace Vim.VisualStudio
             return _vsAdapter.IsReadOnly(textBuffer);
         }
 
+        public override bool GetInsertFinalNewLine(IEditorOptions options)
+        {
+            return _sharedService.GetInsertFinalNewLine(options);
+        }
+
         /// <summary>
         /// Custom process the insert command if possible.  This is handled by VsCommandTarget
         /// </summary>

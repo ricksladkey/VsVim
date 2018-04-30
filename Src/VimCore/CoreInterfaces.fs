@@ -4085,6 +4085,9 @@ type IVimHost =
     /// Is the ITextBuffer read only
     abstract IsReadOnly: textBuffer: ITextBuffer -> bool
 
+    /// Is "insert_final_newline" set for the given ITextBuffer
+    abstract GetInsertFinalNewLine: IEditorOptions -> bool 
+
     /// Is the ITextView visible to the user
     abstract IsVisible: textView: ITextView -> bool
 

@@ -30,6 +30,11 @@ namespace Vim.VisualStudio.Implementation.SharedService
             {
                 return false;
             }
+
+            bool ISharedService.GetInsertFinalNewLine(IEditorOptions options)
+            {
+                return false;
+            }
         }
 
         VisualStudioVersion ISharedServiceVersionFactory.Version

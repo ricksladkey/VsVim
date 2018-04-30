@@ -198,6 +198,16 @@ namespace Vim.UI.Wpf
             return textBuffer.IsReadOnly(span);
         }
 
+        /// <summary>
+        /// Whether "insert_final_newline" is enabled in the specified IEditorOptions
+        /// </summary>
+        /// <param name="options"></param>
+        /// <returns>The IEditorOptions to check</returns>
+        public virtual bool GetInsertFinalNewLine(IEditorOptions options)
+        {
+            return false;
+        }
+
         public virtual bool IsFocused(ITextView textView)
         {
             return textView.HasAggregateFocus;

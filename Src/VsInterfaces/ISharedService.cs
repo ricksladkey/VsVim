@@ -56,6 +56,13 @@ namespace Vim.VisualStudio
         /// Helper to close an <see cref="ITextView"/> when it is a peek window. 
         /// </summary>
         bool ClosePeekView(ITextView peekView);
+
+        /// <summary>
+        /// Whether "insert_final_newline" is set in the specified IEditorOptions
+        /// </summary>
+        /// <param name="options"></param>
+        /// <returns>The IEditorOptions to check</returns>
+        bool GetInsertFinalNewLine(IEditorOptions options);
     }
 
     /// <summary>
