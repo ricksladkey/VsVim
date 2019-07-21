@@ -533,3 +533,47 @@ type internal VimWordCompletionSessionFactoryService
         member x.CreateWordCompletionSession textView wordSpan words isForward = x.CreateWordCompletionSession textView wordSpan words isForward     
         [<CLIEvent>]
         member x.Created = _created.Publish
+
+type internal SingleSelectionUtil(_textView: ITextView) =
+
+    member x.IsMultiSelectionSupported = false
+
+    member x.GetSelectedSpans () =
+        let caretPoint = _textView.Caret.Position.VirtualBufferPosition
+        let anchorPoint = _textView.Selection.AnchorPoint
+        let activePoint = _textView.Selection.ActivePoint
+        seq { yield SelectedSpan(caretPoint, anchorPoint, activePoint) }
+
+    member x.SetSelectedSpans (selectedSpans: SelectedSpan seq) =
+        let selectedSpan = Seq.head selectedSpans
+        _textView.Caret.MoveTo(selectedSpan.CaretPoint) |> ignore
+        if selectedSpan.Length <> 0 then
+            _textView.Selection.Select(selectedSpan.AnchorPoint, selectedSpan.ActivePoint)
+
+    interface ISelectionUtil with
+        member x.IsMultiSelectionSupported = x.IsMultiSelectionSupported
+        member x.GetSelectedSpans() = x.GetSelectedSpans()
+        member x.SetSelectedSpans selectedSpans = x.SetSelectedSpans selectedSpans
+
+type internal SingleSelectionUtilFactory() =
+
+    member x.GetSelectionUtil textView =
+        SingleSelectionUtil(textView) :> ISelectionUtil
+
+    interface ISelectionUtilFactory with
+        member x.GetSelectionUtil textView = x.GetSelectionUtil textView
+
+[<Export(typeof<ISelectionUtilFactoryService>)>]
+type internal SelectionUtilService 
+    [<ImportingConstructor>]
+    (
+        _vimSpecificServiceHost: IVimSpecificServiceHost
+    ) =
+
+    member x.GetSelectionUtilFactory () =
+        match _vimSpecificServiceHost.GetService<ISelectionUtilFactory>() with
+        | Some selectionUtilFactory -> selectionUtilFactory
+        | None -> SingleSelectionUtilFactory() :> ISelectionUtilFactory
+
+    interface ISelectionUtilFactoryService with
+        member x.GetSelectionUtilFactory () = x.GetSelectionUtilFactory()

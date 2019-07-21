@@ -12,7 +12,6 @@ open System.Diagnostics
 open System.IO
 open System.Runtime.CompilerServices
 open System.Runtime.InteropServices
-open System.Collections.Generic
 open System.Threading.Tasks
 open Vim.Interpreter
 open System
@@ -127,6 +126,30 @@ type IFileSystem =
     abstract Read: filePath: string -> Stream option
 
     abstract Write: filePath: string -> stream: Stream -> bool
+
+/// Used for manipulating multiple selections
+type ISelectionUtil =
+
+    /// Whether multi-selection is supported
+    abstract IsMultiSelectionSupported: bool
+
+    /// Get all the selected spans for the specified text view
+    abstract GetSelectedSpans: unit -> SelectedSpan seq
+
+    /// Set all the selected spans for the specified text view
+    abstract SetSelectedSpans: SelectedSpan seq -> unit
+
+/// Factory service for creating ISelectionUtil instances
+type ISelectionUtilFactory = 
+
+    /// Get the selection utility interface
+    abstract GetSelectionUtil: textView: ITextView -> ISelectionUtil
+
+/// Service for creating ISelectionUtilFactory instances
+type ISelectionUtilFactoryService = 
+
+    /// Get the selection utility interface
+    abstract GetSelectionUtilFactory: unit -> ISelectionUtilFactory
 
 /// Used to display a word completion list to the user
 type IWordCompletionSession =
@@ -595,7 +618,7 @@ type SearchData
 
     override x.Equals(other: obj) = 
         match other with
-        | :? SearchData as otherSearchData -> x.Equals(otherSearchData);
+        | :? SearchData as otherSearchData -> x.Equals(otherSearchData)
         | _ -> false 
 
     override x.GetHashCode() =
@@ -2034,35 +2057,24 @@ type VisualSpan =
     /// Select the given VisualSpan in the ITextView
     member x.Select (textView: ITextView) path =
 
-        // Select the given SnapshotSpan
-        let selectSpan startPoint endPoint = 
-
-            textView.Selection.Mode <- TextSelectionMode.Stream
-
-            let startPoint, endPoint = 
-                match path with
-                | SearchPath.Forward -> startPoint, endPoint 
-                | SearchPath.Backward -> endPoint, startPoint
-
-            // The editor will normalize SnapshotSpan values here which extend into the line break
-            // portion of the line to not include the line break.  Must use VirtualSnapshotPoint 
-            // values to ensure the proper selection
-            let startPoint = startPoint |> VirtualSnapshotPointUtil.OfPointConsiderLineBreak
-            let endPoint = endPoint |> VirtualSnapshotPointUtil.OfPointConsiderLineBreak
-
-            textView.Selection.Select(startPoint, endPoint);
-
         // Select the given VirtualSnapshotSpan
         let selectVirtualSpan startPoint endPoint =
 
             textView.Selection.Mode <- TextSelectionMode.Stream
 
-            let startPoint, endPoint =
+            let caretPoint = TextViewUtil.GetCaretVirtualPoint textView
+            let anchorPoint, activePoint =
                 match path with
                 | SearchPath.Forward -> startPoint, endPoint
                 | SearchPath.Backward -> endPoint, startPoint
 
-            textView.Selection.Select(startPoint, endPoint);
+            TextViewUtil.Select textView caretPoint anchorPoint activePoint
+
+        // Select the given SnapshotSpan
+        let selectSpan startPoint endPoint = 
+            let startPoint = startPoint |> VirtualSnapshotPointUtil.OfPointConsiderLineBreak
+            let endPoint = endPoint |> VirtualSnapshotPointUtil.OfPointConsiderLineBreak
+            selectVirtualSpan startPoint endPoint
 
         match x with
         | Character characterSpan ->
@@ -2103,7 +2115,8 @@ type VisualSpan =
                 else
                     blockSpan.VirtualStart.VirtualStartPoint
             textView.Selection.Mode <- TextSelectionMode.Box
-            textView.Selection.Select(startPoint, blockSpan.VirtualEnd.VirtualStartPoint)
+            let caretPoint = TextViewUtil.GetCaretVirtualPoint textView
+            TextViewUtil.Select textView caretPoint startPoint blockSpan.VirtualEnd.VirtualStartPoint
 
     override x.ToString() =
         match x with
@@ -2208,6 +2221,12 @@ type VisualSelection =
     | Block of BlockSpan: BlockSpan * BlockCaretLocation: BlockCaretLocation
 
     with
+
+    member x.IsForward =
+        match x with
+        | Character (_, path) -> path.IsSearchPathForward
+        | Line (_, path, _) -> path.IsSearchPathForward
+        | Block _ -> true
 
     member x.IsCharacterForward =
         match x with
@@ -2368,6 +2387,19 @@ type VisualSelection =
     member x.GetCaretPoint selectionKind =
         let virtualCaretPoint = x.GetCaretVirtualPoint selectionKind
         virtualCaretPoint.Position
+
+    /// Get the primary selected span for the visual selection
+    member x.GetPrimarySelectedSpan selectionKind =
+        let caretPoint =
+            x.GetCaretVirtualPoint selectionKind
+        let span =
+            x.VisualSpan.Spans
+            |> Seq.head
+            |> VirtualSnapshotSpanUtil.OfSpan
+        if x.IsForward then
+            SelectedSpan(caretPoint, span.Start, span.End)
+        else
+            SelectedSpan(caretPoint, span.End, span.Start)
 
     /// Select the given VisualSpan in the ITextView
     member x.Select (textView: ITextView) =
@@ -2630,8 +2662,8 @@ type VisualInsertKind =
     /// The visual insert should begin at the end of the primary span
     | End
 
-    /// The visual insert should begin at the end of the line that the contains
-    /// the start of the primary span
+    /// The visual insert should begin at the end of the line that contains the
+    /// start of the primary span
     | EndOfLine
 
 [<RequireQualifiedAccess>]
@@ -2832,6 +2864,12 @@ type PingData (_func: CommandData -> CommandResult) =
 [<NoComparison>]
 [<StructuralEquality>]
 type NormalCommand = 
+
+    /// Add a new caret at the mouse point
+    | AddCaretAtMousePoint
+
+    /// Add a new caret on an adjacent line in the specified direction
+    | AddCaretOnAdjacentLine of Direction: Direction
 
     /// Add 'count' to the word close to the caret
     | AddToWord
@@ -3073,6 +3111,9 @@ type NormalCommand =
     /// Replace the char under the cursor with the given char
     | ReplaceChar of KeyInput: KeyInput
 
+    /// Restore the most recent set of multiple selections
+    | RestoreMultiSelection
+
     /// Run an 'at' command for the specified character
     | RunAtCommand of Character: char
 
@@ -3133,8 +3174,11 @@ type NormalCommand =
     /// Select text for a mouse release
     | SelectTextForMouseRelease
 
-    /// Select the current word or matching token
+    /// Select the word or matching token under the caret
     | SelectWordOrMatchingToken
+
+    /// Select the word or matching token at the mouse point
+    | SelectWordOrMatchingTokenAtMousePoint
 
     /// Shift 'count' lines from the cursor left
     | ShiftLinesLeft
@@ -3163,7 +3207,7 @@ type NormalCommand =
     /// Switch modes with the specified information
     | SwitchMode of ModeKind: ModeKind * ModeArgument: ModeArgument
 
-    /// Switch to the visual mode specified by 'selectmode=cmd'
+    /// Switch to the specified kind of visual mode
     | SwitchModeVisualCommand of VisualKind: VisualKind
 
     /// Switch to the previous Visual Mode selection
@@ -3202,6 +3246,8 @@ type NormalCommand =
         | NormalCommand.Yank motion -> Some (NormalCommand.Yank, motion)
 
         // Non-motion commands
+        | NormalCommand.AddCaretAtMousePoint -> None
+        | NormalCommand.AddCaretOnAdjacentLine _ -> None
         | NormalCommand.AddToWord _ -> None
         | NormalCommand.CancelOperation -> None
         | NormalCommand.ChangeCaseCaretLine _ -> None
@@ -3271,6 +3317,7 @@ type NormalCommand =
         | NormalCommand.RepeatLastSubstitute _ -> None 
         | NormalCommand.ReplaceAtCaret -> None
         | NormalCommand.ReplaceChar _ -> None
+        | NormalCommand.RestoreMultiSelection -> None
         | NormalCommand.RunAtCommand _ -> None
         | NormalCommand.SetMarkToCaret _ -> None
         | NormalCommand.ScrollColumns _ -> None
@@ -3290,6 +3337,7 @@ type NormalCommand =
         | NormalCommand.SelectTextForMouseDrag -> None
         | NormalCommand.SelectTextForMouseRelease -> None
         | NormalCommand.SelectWordOrMatchingToken -> None
+        | NormalCommand.SelectWordOrMatchingTokenAtMousePoint -> None
         | NormalCommand.ShiftLinesLeft -> None
         | NormalCommand.ShiftLinesRight -> None
         | NormalCommand.SplitViewHorizontally -> None
@@ -3318,8 +3366,20 @@ type NormalCommand =
 [<StructuralEquality>]
 type VisualCommand = 
 
+    /// Add a new caret at the mouse point
+    | AddCaretAtMousePoint
+
+    /// Add the next occurrence of the primary selection
+    | AddNextOccurrenceOfPrimarySelection
+
+    /// Add a new selection on an adjacent line in the specified direction
+    | AddSelectionOnAdjacentLine of Direction: Direction
+
     /// Add count to the word in each line of the selection, optionally progressively
     | AddToSelection of IsProgressive: bool
+
+    /// Add word or matching token at the current mouse point to the selection
+    | AddWordOrMatchingTokenAtMousePointToSelection
 
     /// Cancel any in-progress operation
     | CancelOperation
@@ -3416,13 +3476,16 @@ type VisualCommand =
     | SelectLine
 
     /// Select current word or matching token
-    | SelectWordOrMatchingToken
+    | SelectWordOrMatchingTokenAtMousePoint
 
     /// Shift the selected lines left
     | ShiftLinesLeft
 
     /// Shift the selected lines to the right
     | ShiftLinesRight
+
+    /// Shift the selection into carets
+    | SplitSelectionIntoCarets
 
     /// Subtract count from the word in each line of the selection, optionally progressively
     | SubtractFromSelection of IsProgressive: bool
@@ -4497,6 +4560,12 @@ type ProcessResult =
         | CommandResult.Completed modeSwitch -> Handled modeSwitch
         | CommandResult.Error -> Error
 
+    /// Create a CommandResult from the given ProcessResult value
+    static member ToCommandResult processResult = 
+        match processResult with
+        | Handled modeSwitch -> CommandResult.Completed modeSwitch
+        | _ -> CommandResult.Error
+
 type StringEventArgs(_message: string) =
     inherit System.EventArgs()
 
@@ -5095,6 +5164,12 @@ type IVimHost =
 /// need the same data provided by IVimBuffer.
 and IVimBufferData =
 
+    /// The current caret index
+    abstract CaretIndex: int with get, set
+
+    /// The caret register map
+    abstract CaretRegisterMap: IRegisterMap
+
     /// The current directory for this particular buffer
     abstract CurrentDirectory: string option with get, set
 
@@ -5118,6 +5193,9 @@ and IVimBufferData =
     /// of the visual selection.  While the anchor point for visual mode selection may be in 
     /// the middle (in say line wise mode)
     abstract VisualAnchorPoint: ITrackingPoint option with get, set
+
+    /// The last multi-selection recorded for this buffer
+    abstract LastMultiSelection: (ModeKind * SelectedSpan array) option with get, set
 
     /// The currently maintained caret column for up / down caret movements in
     /// the buffer
@@ -5146,6 +5224,9 @@ and IVimBufferData =
 
     /// The IWordUtil associated with the IVimBuffer
     abstract WordUtil: WordUtil
+
+    /// The ISelectionUtil associated with the IVimBuffer
+    abstract SelectionUtil: ISelectionUtil
 
     /// The IVimLocalSettings associated with the ITextBuffer
     abstract LocalSettings: IVimLocalSettings
@@ -5219,6 +5300,9 @@ and IVim =
 
     /// Create an IVimBuffer for the given ITextView
     abstract CreateVimBuffer: textView: ITextView -> IVimBuffer
+
+    /// Create an IVimBuffer for the specified iVimBufferData
+    abstract CreateVimBufferWithData: vimBufferData: IVimBufferData -> IVimBuffer
 
     /// Create an IVimTextBuffer for the given ITextBuffer
     abstract CreateVimTextBuffer: textBuffer: ITextBuffer -> IVimTextBuffer

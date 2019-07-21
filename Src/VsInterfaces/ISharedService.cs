@@ -1,6 +1,8 @@
 ﻿using Microsoft.FSharp.Core;
 using Microsoft.VisualStudio.Shell.Interop;
+using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
+using System.Collections.Generic;
 using Vim.Interpreter;
 
 namespace Vim.VisualStudio

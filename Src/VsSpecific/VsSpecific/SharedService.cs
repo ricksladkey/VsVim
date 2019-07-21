@@ -13,6 +13,7 @@ using Microsoft.FSharp.Core;
 using System.ComponentModel.Composition.Primitives;
 using System;
 using Vim.Extensions;
+using Microsoft.VisualStudio.Text;
 
 namespace Vim.VisualStudio.Specific
 {

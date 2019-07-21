@@ -52,6 +52,81 @@ type JoinKind =
     | RemoveEmptySpaces
     | KeepEmptySpaces
 
+[<StructuralEquality>]
+[<NoComparison>]
+[<Struct>]
+[<DebuggerDisplay("{ToString(),nq}")>]
+type SelectedSpan =
+
+    val private _caretPoint: VirtualSnapshotPoint
+    val private _anchorPoint: VirtualSnapshotPoint
+    val private _activePoint: VirtualSnapshotPoint
+
+    new (caretPoint: VirtualSnapshotPoint) =
+        {
+            _caretPoint = caretPoint
+            _anchorPoint = caretPoint
+            _activePoint = caretPoint
+        }
+
+    new (caretPoint: VirtualSnapshotPoint, anchorPoint: VirtualSnapshotPoint, activePoint: VirtualSnapshotPoint) =
+        {
+            _caretPoint = caretPoint
+            _anchorPoint = anchorPoint
+            _activePoint = activePoint
+        }
+
+    member x.CaretPoint = x._caretPoint
+    member x.AnchorPoint = x._anchorPoint
+    member x.ActivePoint = x._activePoint
+    member x.IsReversed = x._anchorPoint.Position.Position > x._activePoint.Position.Position
+    member x.Span =
+        if not x.IsReversed then
+            VirtualSnapshotSpan(x._anchorPoint, x._activePoint)
+        else
+            VirtualSnapshotSpan(x._activePoint, x._anchorPoint)
+    member x.Start = x.Span.Start
+    member x.End = x.Span.End
+    member x.Length = x.Span.Length
+    member x.IsEmpty = x.Length = 0
+
+    static member FromSpan (caretPoint: SnapshotPoint) (span: SnapshotSpan) (isReversed: bool) =
+        SelectedSpan.FromVirtualSpan (VirtualSnapshotPoint(caretPoint)) (VirtualSnapshotSpan(span)) isReversed
+
+    static member FromVirtualSpan (caretPoint: VirtualSnapshotPoint) (span: VirtualSnapshotSpan) (isReversed: bool) =
+        if not isReversed then
+            SelectedSpan(caretPoint, span.Start, span.End)
+        else
+            SelectedSpan(caretPoint, span.End, span.Start)
+
+    override x.ToString() =
+        let reversedString =
+            if x.IsReversed then " (reversed)" else ""
+        let displayString =
+            let point = x.CaretPoint.Position
+            let span = x.Span.SnapshotSpan
+            let text =
+                span.GetText()
+                |> StringUtil.GetDisplayString
+            if span.Contains(point) || span.End = point then
+                let offset = point.Position - span.Start.Position
+                text.Substring(0, offset) + "|" + text.Substring(offset)
+            else
+                text
+        let displayString =
+            if x.ActivePoint = x.End then
+                displayString + "*"
+            elif x.ActivePoint = x.Start then
+                "*" + displayString
+            else
+                displayString
+        System.String.Format("{0}: [{1}-{2}){3} '{4}'",
+            x._caretPoint.Position.Position,
+            x.Span.Start.Position.Position,
+            x.Span.End.Position.Position,
+            reversedString,
+            displayString)
+
 type NavigationKind =
     | First = 0
     | Last = 1
